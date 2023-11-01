@@ -78,6 +78,22 @@ in {
         default = null;
         example = "*.coder.example.com";
       };
+      environment = {
+        extra = mkOption {
+          type = types.attrs;
+          description = lib.mdDoc "Extra environment variables to pass run Coder's server with. See Coder documentation.";
+          default = {};
+          example = {
+            CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS = true;
+            CODER_OAUTH2_GITHUB_ALLOWED_ORGS = "your-org";
+          };
+        };
+        file = mkOption {
+          type = types.nullOr types.path;
+          description = lib.mdDoc "Systemd environment file to add to Coder.";
+          default = null;
+        };
+      };
 
       database = {
         createLocally = mkOption {
@@ -146,72 +162,73 @@ in {
       };
     };
   };
+};
 
-  config = mkIf cfg.enable {
-    assertions = [
-      { assertion = cfg.database.createLocally -> cfg.database.username == name;
-        message = "services.coder.database.username must be set to ${user} if services.coder.database.createLocally is set true";
-      }
-    ];
+config = mkIf cfg.enable {
+  assertions = [
+    { assertion = cfg.database.createLocally -> cfg.database.username == name;
+      message = "services.coder.database.username must be set to ${user} if services.coder.database.createLocally is set true";
+    }
+  ];
 
-    systemd.services.coder = {
-      description = "Coder - Self-hosted developer workspaces on your infra";
-      after = [ "network.target" ];
-      wantedBy = [ "multi-user.target" ];
+  systemd.services.coder = {
+    description = "Coder - Self-hosted developer workspaces on your infra";
+    after = [ "network.target" ];
+    wantedBy = [ "multi-user.target" ];
 
-      environment = {
-        CODER_ACCESS_URL = cfg.accessUrl;
-        CODER_WILDCARD_ACCESS_URL = cfg.wildcardAccessUrl;
-        CODER_PG_CONNECTION_URL = "user=${cfg.database.username} ${optionalString (cfg.database.password != null) "password=${cfg.database.password}"} database=${cfg.database.database} host=${cfg.database.host} ${optionalString (cfg.database.sslmode != null) "sslmode=${cfg.database.sslmode}"}";
-        CODER_ADDRESS = cfg.listenAddress;
-        CODER_TLS_ENABLE = optionalString (cfg.tlsCert != null) "1";
-        CODER_TLS_CERT_FILE = cfg.tlsCert;
-        CODER_TLS_KEY_FILE = cfg.tlsKey;
-      };
-
-      serviceConfig = {
-        ProtectSystem = "full";
-        PrivateTmp = "yes";
-        PrivateDevices = "yes";
-        SecureBits = "keep-caps";
-        AmbientCapabilities = "CAP_IPC_LOCK CAP_NET_BIND_SERVICE";
-        CacheDirectory = "coder";
-        CapabilityBoundingSet = "CAP_SYSLOG CAP_IPC_LOCK CAP_NET_BIND_SERVICE";
-        KillSignal = "SIGINT";
-        KillMode = "mixed";
-        NoNewPrivileges = "yes";
-        Restart = "on-failure";
-        ExecStart = "${cfg.package}/bin/coder server";
-        User = cfg.user;
-        Group = cfg.group;
-      };
+    environment = cfg.extraEnvironment // {
+      CODER_ACCESS_URL = cfg.accessUrl;
+      CODER_WILDCARD_ACCESS_URL = cfg.wildcardAccessUrl;
+      CODER_PG_CONNECTION_URL = "user=${cfg.database.username} ${optionalString (cfg.database.password != null) "password=${cfg.database.password}"} database=${cfg.database.database} host=${cfg.database.host} ${optionalString (cfg.database.sslmode != null) "sslmode=${cfg.database.sslmode}"}";
+      CODER_ADDRESS = cfg.listenAddress;
+      CODER_TLS_ENABLE = optionalString (cfg.tlsCert != null) "1";
+      CODER_TLS_CERT_FILE = cfg.tlsCert;
+      CODER_TLS_KEY_FILE = cfg.tlsKey;
     };
 
-    services.postgresql = lib.mkIf cfg.database.createLocally {
-      enable = true;
-      ensureDatabases = [
-        cfg.database.database
-      ];
-      ensureUsers = [{
-        name = cfg.database.username;
-        ensurePermissions = {
-          "DATABASE \"${cfg.database.database}\"" = "ALL PRIVILEGES";
-        };
-        }
-      ];
-    };
-
-    users.groups = optionalAttrs (cfg.group == name) {
-      "${cfg.group}" = {};
-    };
-    users.users = optionalAttrs (cfg.user == name) {
-      ${name} = {
-        description = "Coder service user";
-        group = cfg.group;
-        home = cfg.homeDir;
-        createHome = true;
-        isSystemUser = true;
-      };
+    serviceConfig = {
+      ProtectSystem = "full";
+      PrivateTmp = "yes";
+      PrivateDevices = "yes";
+      SecureBits = "keep-caps";
+      AmbientCapabilities = "CAP_IPC_LOCK CAP_NET_BIND_SERVICE";
+      CacheDirectory = "coder";
+      CapabilityBoundingSet = "CAP_SYSLOG CAP_IPC_LOCK CAP_NET_BIND_SERVICE";
+      KillSignal = "SIGINT";
+      KillMode = "mixed";
+      NoNewPrivileges = "yes";
+      Restart = "on-failure";
+      ExecStart = "${cfg.package}/bin/coder server";
+      User = cfg.user;
+      Group = cfg.group;
     };
   };
+
+  services.postgresql = lib.mkIf cfg.database.createLocally {
+    enable = true;
+    ensureDatabases = [
+      cfg.database.database
+    ];
+    ensureUsers = [{
+      name = cfg.database.username;
+      ensurePermissions = {
+        "DATABASE \"${cfg.database.database}\"" = "ALL PRIVILEGES";
+      };
+    }
+                  ];
+  };
+
+  users.groups = optionalAttrs (cfg.group == name) {
+    "${cfg.group}" = {};
+  };
+  users.users = optionalAttrs (cfg.user == name) {
+    ${name} = {
+      description = "Coder service user";
+      group = cfg.group;
+      home = cfg.homeDir;
+      createHome = true;
+      isSystemUser = true;
+    };
+  };
+};
 }
